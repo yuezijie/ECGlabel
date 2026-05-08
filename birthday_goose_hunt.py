@@ -23,6 +23,7 @@ WORLD_HEIGHT = 1900
 PLAYER_SPEED = 7
 DISCOVER_RADIUS = 250
 ATTACK_RADIUS = 110
+PLAYER_COLLISION_RADIUS = 32
 ENEMY_COUNT = 10
 
 SPACE_COLOR = "#0d1630"
@@ -127,6 +128,37 @@ PROPS = [
     Prop("sofa", 2130, 1530, 310, 120, "#e28b6d", ""),
 ]
 
+WALKABLE_AREAS = [
+    (room.x1, room.y1, room.x2, room.y2) for room in ROOMS
+] + CORRIDORS
+
+DOORS = [
+    (945, 335, 990, 415, "厨房 → 舰桥"),
+    (1710, 325, 1760, 410, "舰桥 → 货舱"),
+    (1410, 620, 1490, 690, "舰桥 ↓ 大厅"),
+    (760, 940, 845, 1020, "花园舱 → 大厅"),
+    (1800, 940, 1880, 1020, "大厅 → 医疗舱"),
+    (1390, 1295, 1485, 1380, "大厅 ↓ 礼物仓库"),
+    (865, 1525, 950, 1610, "反应堆 → 礼物仓库"),
+    (1710, 1540, 1795, 1625, "礼物仓库 → 休息室"),
+]
+
+LIGHTS = [
+    (1410, 260, 260, "#7fd7ff"),
+    (540, 385, 235, "#ffd68a"),
+    (2300, 410, 260, "#9fdfff"),
+    (1430, 930, 330, "#b2e7ff"),
+    (515, 1590, 300, "#b395ff"),
+    (1450, 1560, 300, "#ffd36f"),
+    (2300, 1570, 250, "#ffad8b"),
+]
+
+FLOOR_DECALS = [
+    (1340, 930, 210, 72, "生日快乐", "#f7bf3f"),
+    (1320, 1575, 260, 84, "GIFT BAY", "#ffdd80"),
+    (2050, 520, 170, 54, "CARGO", "#b9e8ff"),
+]
+
 
 TELEMETRY_DOTS = [
     (110, 120),
@@ -138,6 +170,35 @@ TELEMETRY_DOTS = [
     (1640, 1860),
 ]
 
+
+def point_in_rect(x: float, y: float, area: tuple[float, float, float, float]) -> bool:
+    """判断点是否在矩形区域内。"""
+
+    x1, y1, x2, y2 = area
+    return x1 <= x <= x2 and y1 <= y <= y2
+
+
+def point_in_walkable_area(x: float, y: float) -> bool:
+    """判断点是否落在房间或走廊内。"""
+
+    return any(point_in_rect(x, y, area) for area in WALKABLE_AREAS)
+
+
+def is_walkable(x: float, y: float, radius: float = PLAYER_COLLISION_RADIUS) -> bool:
+    """用多采样碰撞体判断角色是否能站在目标位置。"""
+
+    samples = [
+        (x, y),
+        (x - radius, y),
+        (x + radius, y),
+        (x, y - radius),
+        (x, y + radius),
+        (x - radius * 0.72, y - radius * 0.72),
+        (x + radius * 0.72, y - radius * 0.72),
+        (x - radius * 0.72, y + radius * 0.72),
+        (x + radius * 0.72, y + radius * 0.72),
+    ]
+    return all(point_in_walkable_area(sample_x, sample_y) for sample_x, sample_y in samples)
 
 def clamp(value: float, minimum: float, maximum: float) -> float:
     """把数值限制在给定范围内。"""
@@ -159,7 +220,7 @@ def make_hidden_geese(seed: int | None = 20260508) -> list[Goose]:
         (2540, 560),
         (185, 1170),
         (710, 815),
-        (1975, 1210),
+        (2085, 1210),
         (360, 1730),
         (1695, 1750),
         (2580, 1450),
@@ -167,13 +228,16 @@ def make_hidden_geese(seed: int | None = 20260508) -> list[Goose]:
 
     geese: list[Goose] = []
     for index, (x, y) in enumerate(hiding_spots):
-        geese.append(
-            Goose(
-                x=clamp(x + rng.randint(-55, 55), 80, WORLD_WIDTH - 80),
-                y=clamp(y + rng.randint(-55, 55), 80, WORLD_HEIGHT - 80),
-                gift_number=gift_numbers[index],
-            )
-        )
+        goose_x = x
+        goose_y = y
+        for _ in range(30):
+            candidate_x = clamp(x + rng.randint(-55, 55), 80, WORLD_WIDTH - 80)
+            candidate_y = clamp(y + rng.randint(-55, 55), 80, WORLD_HEIGHT - 80)
+            if is_walkable(candidate_x, candidate_y, radius=24):
+                goose_x = candidate_x
+                goose_y = candidate_y
+                break
+        geese.append(Goose(x=goose_x, y=goose_y, gift_number=gift_numbers[index]))
     return geese
 
 
@@ -246,8 +310,13 @@ class BirthdayGooseGame:
         elif dx > 0:
             self.player.facing = "right"
 
-        self.player.x = clamp(self.player.x + dx * PLAYER_SPEED, 35, WORLD_WIDTH - 35)
-        self.player.y = clamp(self.player.y + dy * PLAYER_SPEED, 35, WORLD_HEIGHT - 35)
+        next_x = clamp(self.player.x + dx * PLAYER_SPEED, 35, WORLD_WIDTH - 35)
+        next_y = clamp(self.player.y + dy * PLAYER_SPEED, 35, WORLD_HEIGHT - 35)
+
+        if is_walkable(next_x, self.player.y):
+            self.player.x = next_x
+        if is_walkable(self.player.x, next_y):
+            self.player.y = next_y
 
     def on_click(self, event: tk.Event) -> None:
         if self.game_over:
@@ -296,8 +365,8 @@ class BirthdayGooseGame:
         self.draw_ship_map()
         self.draw_geese()
         self.draw_player()
+        self.draw_atmosphere()
         self.draw_hud()
-        self.draw_minimap()
 
     def draw_space_background(self) -> None:
         camera_x, camera_y = self.camera()
@@ -317,25 +386,67 @@ class BirthdayGooseGame:
             self.draw_panel(room.x1, room.y1, room.x2, room.y2, room.color, room.name)
             self.draw_floor_lines(room.x1, room.y1, room.x2, room.y2, 110)
 
+        self.draw_light_spills()
+        for x, y, w, h, text, color in FLOOR_DECALS:
+            self.draw_floor_decal(x, y, w, h, text, color)
+        for x1, y1, x2, y2, label in DOORS:
+            self.draw_door(x1, y1, x2, y2, label)
         for prop in PROPS:
             self.draw_prop(prop)
 
     def draw_panel(self, x1: float, y1: float, x2: float, y2: float, fill: str, label: str) -> None:
-        self.create_world_rectangle(x1 + 10, y1 + 14, x2 + 10, y2 + 14, fill=SHADOW_COLOR, outline="")
-        self.create_world_rectangle(x1 - 12, y1 - 12, x2 + 12, y2 + 12, fill=WALL_COLOR, outline="")
-        self.create_world_rectangle(x1, y1, x2, y2, fill=fill, outline=WALL_EDGE_COLOR, width=3)
+        bevel = 30
+        panel_points = [
+            x1 + bevel,
+            y1,
+            x2 - bevel,
+            y1,
+            x2,
+            y1 + bevel,
+            x2,
+            y2 - bevel,
+            x2 - bevel,
+            y2,
+            x1 + bevel,
+            y2,
+            x1,
+            y2 - bevel,
+            x1,
+            y1 + bevel,
+        ]
+        self.create_world_polygon(*[coord + 12 if index % 2 == 0 else coord + 16 for index, coord in enumerate(panel_points)], fill=SHADOW_COLOR, outline="")
+        self.create_world_rectangle(x1 - 20, y1 - 20, x2 + 20, y2 + 20, fill=WALL_COLOR, outline="")
+        self.create_world_polygon(*panel_points, fill=fill, outline=WALL_EDGE_COLOR, width=4)
         self.create_world_rectangle(x1 + 18, y1 + 18, x2 - 18, y2 - 18, fill="", outline="#456b91", width=1)
+        self.create_world_line(x1 + 36, y1 + 24, x2 - 36, y1 + 24, fill="#83bee8", width=2)
+        self.create_world_line(x1 + 36, y2 - 24, x2 - 36, y2 - 24, fill="#162944", width=3)
         if label:
             sx, sy = self.world_to_screen((x1 + x2) / 2, y1 + 35)
+            self.canvas.create_text(sx + 2, sy + 2, text=label, fill="#102235", font=("Microsoft YaHei", 15, "bold"))
             self.canvas.create_text(sx, sy, text=label, fill="#d9f3ff", font=("Microsoft YaHei", 15, "bold"))
 
     def draw_floor_lines(self, x1: float, y1: float, x2: float, y2: float, spacing: int) -> None:
         start_x = int(x1 // spacing * spacing)
         start_y = int(y1 // spacing * spacing)
         for x in range(start_x, int(x2) + spacing, spacing):
-            self.create_world_line(x, y1 + 10, x, y2 - 10, fill="#3e5f83")
+            self.create_world_line(x, y1 + 12, x, y2 - 12, fill="#3e5f83")
+            self.create_world_line(x + spacing / 2, y1 + 18, x + spacing / 2, y2 - 18, fill="#284563")
         for y in range(start_y, int(y2) + spacing, spacing):
-            self.create_world_line(x1 + 10, y, x2 - 10, y, fill="#20364f")
+            self.create_world_line(x1 + 12, y, x2 - 12, y, fill="#20364f")
+
+    def draw_light_spills(self) -> None:
+        for x, y, radius, color in LIGHTS:
+            self.create_world_oval(x - radius, y - radius * 0.62, x + radius, y + radius * 0.62, fill=color, outline="", stipple="gray12")
+
+    def draw_floor_decal(self, x: float, y: float, w: float, h: float, text: str, color: str) -> None:
+        self.create_world_oval(x - w / 2, y - h / 2, x + w / 2, y + h / 2, fill="#10233a", outline=color, width=2)
+        self.create_world_text(x, y, text, fill=color, font=("Arial", 12, "bold"))
+
+    def draw_door(self, x1: float, y1: float, x2: float, y2: float, label: str) -> None:
+        self.create_world_rectangle(x1, y1, x2, y2, fill="#132941", outline="#a6e8ff", width=2)
+        self.create_world_rectangle(x1 + 8, y1 + 8, x2 - 8, y2 - 8, fill="", outline="#4bc3ff", width=2)
+        self.create_world_line(x1 + 12, (y1 + y2) / 2, x2 - 12, (y1 + y2) / 2, fill="#f7bf3f", width=2)
+        self.create_world_text((x1 + x2) / 2, y1 - 12, label, fill="#b9ecff", font=("Microsoft YaHei", 8, "bold"))
 
     def draw_prop(self, prop: Prop) -> None:
         x1 = prop.x
@@ -437,6 +548,12 @@ class BirthdayGooseGame:
         self.canvas.create_oval(sx - 46, sy - 78 + bob, sx + 46, sy - 55 + bob, fill="#111d31", outline="#f5d66f", width=2)
         self.canvas.create_text(sx, sy - 67 + bob, text=label, fill=TEXT_COLOR, font=("Arial", 15, "bold"))
 
+    def draw_atmosphere(self) -> None:
+        self.canvas.create_rectangle(0, 86, WINDOW_WIDTH, 120, fill="#07111f", outline="", stipple="gray25")
+        self.canvas.create_rectangle(0, WINDOW_HEIGHT - 46, WINDOW_WIDTH, WINDOW_HEIGHT, fill="#050b16", outline="", stipple="gray25")
+        self.canvas.create_rectangle(0, 0, 34, WINDOW_HEIGHT, fill="#050b16", outline="", stipple="gray25")
+        self.canvas.create_rectangle(WINDOW_WIDTH - 34, 0, WINDOW_WIDTH, WINDOW_HEIGHT, fill="#050b16", outline="", stipple="gray25")
+
     def draw_hud(self) -> None:
         remaining = sum(not goose.defeated for goose in self.geese)
         defeated = ENEMY_COUNT - remaining
@@ -468,44 +585,13 @@ class BirthdayGooseGame:
             font=("Microsoft YaHei", 14),
         )
 
-    def draw_minimap(self) -> None:
-        map_w = 188
-        map_h = 128
-        x0 = WINDOW_WIDTH - map_w - 22
-        y0 = WINDOW_HEIGHT - map_h - 22
-        scale_x = map_w / WORLD_WIDTH
-        scale_y = map_h / WORLD_HEIGHT
-        self.canvas.create_rectangle(x0 - 8, y0 - 28, x0 + map_w + 8, y0 + map_h + 8, fill="#07111f", outline="#6ca6d8", width=2)
-        self.canvas.create_text(x0, y0 - 16, anchor="w", text="小地图", fill=TEXT_COLOR, font=("Microsoft YaHei", 11, "bold"))
-        self.canvas.create_rectangle(x0, y0, x0 + map_w, y0 + map_h, fill="#162942", outline="#405f82")
-        for room in ROOMS:
-            self.canvas.create_rectangle(
-                x0 + room.x1 * scale_x,
-                y0 + room.y1 * scale_y,
-                x0 + room.x2 * scale_x,
-                y0 + room.y2 * scale_y,
-                fill="#34536f",
-                outline="",
-            )
-        self.canvas.create_oval(
-            x0 + self.player.x * scale_x - 4,
-            y0 + self.player.y * scale_y - 4,
-            x0 + self.player.x * scale_x + 4,
-            y0 + self.player.y * scale_y + 4,
-            fill=GOLD_COLOR,
-            outline="",
-        )
-        for goose in self.geese:
-            if goose.defeated:
-                continue
-            self.canvas.create_oval(
-                x0 + goose.x * scale_x - 2,
-                y0 + goose.y * scale_y - 2,
-                x0 + goose.x * scale_x + 2,
-                y0 + goose.y * scale_y + 2,
-                fill="#ff7c7c",
-                outline="",
-            )
+    def create_world_polygon(self, *coords: float, **kwargs: object) -> None:
+        camera_x, camera_y = self.camera()
+        screen_coords = [
+            coord - camera_x if index % 2 == 0 else coord - camera_y
+            for index, coord in enumerate(coords)
+        ]
+        self.canvas.create_polygon(*screen_coords, **kwargs)
 
     def create_world_rectangle(self, x1: float, y1: float, x2: float, y2: float, **kwargs: object) -> None:
         camera_x, camera_y = self.camera()
