@@ -3,8 +3,8 @@
 运行：
     python birthday_goose_hunt.py
 
-玩法：WASD 控制白鹅在大地图探索；靠近藏起来的鹅后，鼠标左键点击它；
-被“砍倒”的鹅会弹出 1-10 的礼物编号。全部找到后游戏结束。
+玩法：WASD 控制白鹅在大地图探索；靠近藏起来的鸭子后，鼠标左键点击它；
+被“砍倒”的鸭子会变成鸡腿并弹出 1-10 的礼物编号。全部找到后游戏结束。
 """
 
 from __future__ import annotations
@@ -32,7 +32,8 @@ WALL_COLOR = "#0b1427"
 WALL_EDGE_COLOR = "#73a7d2"
 SHADOW_COLOR = "#07101f"
 PLAYER_COLOR = "#fff8e7"
-ENEMY_COLOR = "#f8f1d5"
+DUCK_COLOR = "#ffd45f"
+DUCK_HEAD_COLOR = "#2f9f6b"
 DEFEATED_COLOR = "#9d5454"
 HIGHLIGHT_COLOR = "#ffd65c"
 TEXT_COLOR = "#fff4c7"
@@ -66,7 +67,7 @@ class Prop:
 
 @dataclass
 class Goose:
-    """地图上的鹅。"""
+    """地图上的隐藏鸭子。"""
 
     x: float
     y: float
@@ -207,7 +208,7 @@ def clamp(value: float, minimum: float, maximum: float) -> float:
 
 
 def make_hidden_geese(seed: int | None = 20260508) -> list[Goose]:
-    """生成 10 只藏在房间角落和偏僻通道的鹅。"""
+    """生成 10 只藏在房间角落和偏僻通道的鸭子。"""
 
     rng = random.Random(seed)
     gift_numbers = list(range(1, ENEMY_COUNT + 1))
@@ -262,7 +263,7 @@ class BirthdayGooseGame:
         self.geese = make_hidden_geese()
         self.keys: set[str] = set()
         self.game_over = False
-        self.last_message = "WASD 探索飞船，靠近藏鹅后用鼠标左键点击。"
+        self.last_message = "WASD 控制白鹅探索飞船，靠近藏鸭后用鼠标左键点击。"
         self.tick = 0
 
         self.root.bind("<KeyPress>", self.on_key_press)
@@ -325,13 +326,13 @@ class BirthdayGooseGame:
         world_x, world_y = self.screen_to_world(event.x, event.y)
         target = self.pick_target(world_x, world_y)
         if target is None:
-            self.last_message = "再靠近一点，或者点准头顶有 ! 的鹅！"
+            self.last_message = "再靠近一点，或者点准头顶有 ! 的鸭子！"
             return
 
         target.defeated = True
         remaining = sum(not goose.defeated for goose in self.geese)
-        self.last_message = f"获得礼物编号 {target.gift_number}！还剩 {remaining} 只鹅。"
-        messagebox.showinfo("礼物时间", f"你砍倒了一只鹅！请拿出 {target.gift_number} 号礼物。")
+        self.last_message = f"获得礼物编号 {target.gift_number}！还剩 {remaining} 只鸭子。"
+        messagebox.showinfo("礼物时间", f"你砍倒了一只鸭子！请拿出 {target.gift_number} 号礼物。")
 
         if remaining == 0:
             self.finish_game()
@@ -491,19 +492,18 @@ class BirthdayGooseGame:
             self.create_world_rectangle(x1 + 20, y1, x2 - 20, y1 + 70, fill=prop.color, outline="#ffd4c6", width=2)
 
     def draw_geese(self) -> None:
-        for goose in sorted(self.geese, key=lambda item: item.y):
-            if goose.defeated:
-                self.draw_goose(goose.x, goose.y, DEFEATED_COLOR, "×", "left", ghost=True)
+        for duck in sorted(self.geese, key=lambda item: item.y):
+            if duck.defeated:
+                self.draw_chicken_leg(duck.x, duck.y)
                 continue
 
-            distance = goose.distance_to(self.player.x, self.player.y)
+            distance = duck.distance_to(self.player.x, self.player.y)
             if distance <= DISCOVER_RADIUS:
                 label = "!" if distance <= ATTACK_RADIUS else "?"
-                color = HIGHLIGHT_COLOR if distance <= ATTACK_RADIUS else ENEMY_COLOR
-                self.draw_goose(goose.x, goose.y, color, label, "left")
+                self.draw_duck(duck.x, duck.y, label, highlight=distance <= ATTACK_RADIUS)
 
     def draw_player(self) -> None:
-        self.draw_goose(self.player.x, self.player.y, PLAYER_COLOR, "你", self.player.facing)
+        self.draw_player_goose(self.player.x, self.player.y, self.player.facing)
         sx, sy = self.world_to_screen(self.player.x, self.player.y)
         radius = ATTACK_RADIUS
         self.canvas.create_oval(
@@ -516,37 +516,73 @@ class BirthdayGooseGame:
             dash=(5, 7),
         )
 
-    def draw_goose(self, x: float, y: float, color: str, label: str, facing: str, ghost: bool = False) -> None:
+    def draw_player_goose(self, x: float, y: float, facing: str) -> None:
         sx, sy = self.world_to_screen(x, y)
-        bob = math.sin(self.tick / 9) * 2 if not ghost else 0
+        bob = math.sin(self.tick / 9) * 2
         flip = -1 if facing == "left" else 1
         outline = "#2d2518"
-        visor = "#9fe7ff" if not ghost else "#503030"
 
-        self.canvas.create_oval(sx - 38, sy + 20, sx + 40, sy + 42, fill="#07101a", outline="")
-        self.canvas.create_oval(sx - 33, sy - 28 + bob, sx + 33, sy + 32 + bob, fill=color, outline=outline, width=3)
-        self.canvas.create_oval(sx - 20, sy - 58 + bob, sx + 28, sy - 14 + bob, fill=color, outline=outline, width=3)
-        wing_x1, wing_x2 = sorted((sx - 10 * flip, sx - 37 * flip))
-        visor_x1, visor_x2 = sorted((sx - 7 * flip, sx + 17 * flip))
-        eye_x1, eye_x2 = sorted((sx + 21 * flip, sx + 28 * flip))
-        self.canvas.create_oval(wing_x1, sy - 11 + bob, wing_x2, sy + 18 + bob, fill="#e8dfc9", outline=outline, width=2)
-        self.canvas.create_oval(visor_x1, sy - 48 + bob, visor_x2, sy - 31 + bob, fill=visor, outline="#24465a", width=2)
-        self.canvas.create_oval(eye_x1, sy - 43 + bob, eye_x2, sy - 36 + bob, fill="#1b1b1b", outline="")
+        self.canvas.create_oval(sx - 46, sy + 24, sx + 50, sy + 48, fill="#07101a", outline="")
+        self.canvas.create_oval(sx - 42, sy - 12 + bob, sx + 34, sy + 40 + bob, fill=PLAYER_COLOR, outline=outline, width=3)
         self.canvas.create_polygon(
-            sx + 27 * flip,
-            sy - 32 + bob,
+            sx - 6 * flip,
+            sy - 8 + bob,
+            sx + 11 * flip,
+            sy - 62 + bob,
+            sx + 36 * flip,
+            sy - 58 + bob,
+            sx + 18 * flip,
+            sy - 2 + bob,
+            fill=PLAYER_COLOR,
+            outline=outline,
+        )
+        head_x1, head_x2 = sorted((sx + 13 * flip, sx + 58 * flip))
+        wing_x1, wing_x2 = sorted((sx - 9 * flip, sx - 37 * flip))
+        eye_x1, eye_x2 = sorted((sx + 30 * flip, sx + 38 * flip))
+        self.canvas.create_oval(head_x1, sy - 82 + bob, head_x2, sy - 45 + bob, fill=PLAYER_COLOR, outline=outline, width=3)
+        self.canvas.create_oval(wing_x1, sy + 0 + bob, wing_x2, sy + 28 + bob, fill="#e7dec8", outline=outline, width=2)
+        self.canvas.create_oval(eye_x1, sy - 71 + bob, eye_x2, sy - 63 + bob, fill="#151515", outline="")
+        self.canvas.create_polygon(
             sx + 55 * flip,
-            sy - 24 + bob,
-            sx + 27 * flip,
-            sy - 17 + bob,
+            sy - 68 + bob,
+            sx + 82 * flip,
+            sy - 60 + bob,
+            sx + 55 * flip,
+            sy - 52 + bob,
             fill="#f0a13a",
             outline="#8a4b12",
         )
+        self.canvas.create_line(sx - 16, sy + 34 + bob, sx - 29, sy + 52 + bob, fill="#f0a13a", width=4)
+        self.canvas.create_line(sx + 14, sy + 34 + bob, sx + 27, sy + 52 + bob, fill="#f0a13a", width=4)
+        self.canvas.create_polygon(sx - 22, sy - 20 + bob, sx - 43, sy - 5 + bob, sx - 24, sy + 2 + bob, fill="#d34d4d", outline="#772828")
+        self.canvas.create_oval(sx - 40, sy - 112 + bob, sx + 46, sy - 89 + bob, fill="#111d31", outline="#f5d66f", width=2)
+        self.canvas.create_text(sx, sy - 101 + bob, text="你", fill=TEXT_COLOR, font=("Arial", 15, "bold"))
+
+    def draw_duck(self, x: float, y: float, label: str, highlight: bool) -> None:
+        sx, sy = self.world_to_screen(x, y)
+        bob = math.sin(self.tick / 10) * 2
+        body_color = HIGHLIGHT_COLOR if highlight else DUCK_COLOR
+        outline = "#3a2b18"
+
+        self.canvas.create_oval(sx - 36, sy + 18, sx + 40, sy + 40, fill="#07101a", outline="")
+        self.canvas.create_oval(sx - 34, sy - 18 + bob, sx + 34, sy + 34 + bob, fill=body_color, outline=outline, width=3)
+        self.canvas.create_oval(sx + 2, sy - 56 + bob, sx + 45, sy - 18 + bob, fill=DUCK_HEAD_COLOR, outline=outline, width=3)
+        self.canvas.create_oval(sx - 24, sy - 5 + bob, sx + 12, sy + 22 + bob, fill="#e6b33d", outline=outline, width=2)
+        self.canvas.create_oval(sx + 28, sy - 46 + bob, sx + 35, sy - 39 + bob, fill="#141414", outline="")
+        self.canvas.create_polygon(sx + 42, sy - 38 + bob, sx + 66, sy - 31 + bob, sx + 42, sy - 24 + bob, fill="#f0a13a", outline="#8a4b12")
         self.canvas.create_line(sx - 13, sy + 28 + bob, sx - 23, sy + 44 + bob, fill="#f0a13a", width=4)
-        self.canvas.create_line(sx + 14, sy + 28 + bob, sx + 24, sy + 44 + bob, fill="#f0a13a", width=4)
-        self.canvas.create_polygon(sx - 26, sy - 34 + bob, sx - 44, sy - 20 + bob, sx - 29, sy - 17 + bob, fill="#d34d4d", outline="#772828")
-        self.canvas.create_oval(sx - 46, sy - 78 + bob, sx + 46, sy - 55 + bob, fill="#111d31", outline="#f5d66f", width=2)
+        self.canvas.create_line(sx + 12, sy + 29 + bob, sx + 22, sy + 44 + bob, fill="#f0a13a", width=4)
+        self.canvas.create_oval(sx - 44, sy - 78 + bob, sx + 44, sy - 55 + bob, fill="#111d31", outline="#f5d66f", width=2)
         self.canvas.create_text(sx, sy - 67 + bob, text=label, fill=TEXT_COLOR, font=("Arial", 15, "bold"))
+
+    def draw_chicken_leg(self, x: float, y: float) -> None:
+        sx, sy = self.world_to_screen(x, y)
+        self.canvas.create_oval(sx - 42, sy + 18, sx + 42, sy + 39, fill="#07101a", outline="")
+        self.canvas.create_oval(sx - 31, sy - 12, sx + 18, sy + 29, fill="#c8752f", outline="#5a2b16", width=3)
+        self.canvas.create_oval(sx - 22, sy - 4, sx + 8, sy + 20, fill="#e49a45", outline="")
+        self.canvas.create_line(sx + 12, sy + 18, sx + 44, sy + 42, fill="#f4e7ca", width=12)
+        self.canvas.create_oval(sx + 38, sy + 33, sx + 58, sy + 51, fill="#f4e7ca", outline="#9d8c73", width=2)
+        self.canvas.create_oval(sx + 48, sy + 22, sx + 66, sy + 40, fill="#f4e7ca", outline="#9d8c73", width=2)
 
     def draw_atmosphere(self) -> None:
         self.canvas.create_rectangle(0, 86, WINDOW_WIDTH, 120, fill="#07111f", outline="", stipple="gray25")
@@ -571,7 +607,7 @@ class BirthdayGooseGame:
             34,
             56,
             anchor="w",
-            text="靠近出现 ! 的鹅，再左键点击",
+            text="靠近出现 ! 的鸭子，再左键点击",
             fill="#a6d9ff",
             font=("Microsoft YaHei", 11),
         )
